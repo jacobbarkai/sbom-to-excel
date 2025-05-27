@@ -300,7 +300,11 @@ Contributions are welcome! Consider adding:
 
 ## License
 
-This tool is provided as-is for SBOM management and analysis purposes.
+The SBOM To Excel tool is Copyright (c) Jacob Barkai. All Rights Reserved.
+
+Permission to modify and redistribute is granted under the terms of the Apache 2.0 license. See the [LICENSE] file for the full license.
+
+[License]: https://github.com/jacobbarkai/sbom-to-excel/blob/main/LICENSE
 
 ## Related Tools
 
