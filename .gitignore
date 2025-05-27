@@ -1,0 +1,44 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+*.xlsx
+*.xls
+output/
+temp/
+
+# SPDX test files (uncomment if you want to exclude test files)
+# test_files/
+# *.spdx
+# test_*.json
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+Thumbs.db
+.Thumbs.db
+._*
