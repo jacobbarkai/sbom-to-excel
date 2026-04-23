@@ -4,7 +4,7 @@
 
 - **Multi-Format Support**: 
   - SPDX 2.2/2.3 (tag-value and JSON formats)
-  - CycloneDX 1.3/1.4/1.5 (JSON and XML formats)
+  - CycloneDX 1.3/1.4/1.5/1.6 (JSON and XML formats)
 - **Auto-Detection**: Automatically detects# SBOM to Excel Converter
 
 A universal Python tool for converting Software Bill of Materials (SBOM) files into well-organized Excel spreadsheets. This tool supports both SPDX and CycloneDX formats, helping organizations manage and analyze SBOM data in a familiar tabular format.
@@ -22,7 +22,7 @@ The SBOM to Excel Converter transforms SPDX and CycloneDX files into structured 
 
 - **Multi-Format Support**: 
   - SPDX 2.2/2.3 (tag-value and JSON formats)
-  - CycloneDX 1.3/1.4/1.5 (JSON and XML formats)
+  - CycloneDX 1.3/1.4/1.5/1.6 (JSON and XML formats)
 - **Auto-Detection**: Automatically detects SBOM format from file content
 - **Comprehensive Data Extraction**: Captures all essential fields including packages, licenses, checksums, and metadata
 - **Unified Output**: Normalizes data from different SBOM formats into a consistent Excel structure
@@ -69,6 +69,15 @@ This creates an Excel file with the same name in the current directory.
 
 ```bash
 python sbom_to_excel.py sbom.json -o my_report.xlsx
+```
+
+### CSV Output
+
+Use a `.csv` extension on the output path to get just the Components table as
+a CSV (document info, summary, and license breakdown are `.xlsx`-only):
+
+```bash
+python sbom_to_excel.py sbom.json -o components.csv
 ```
 
 ### Force Specific Format
@@ -293,9 +302,9 @@ Contributions are welcome! Consider adding:
 - File-level information extraction
 - Dependency tree visualization
 - Custom filtering options
-- Additional output formats (CSV, HTML)
+- Additional output formats (HTML)
 - SPDX 3.0 support when available
-- CycloneDX 1.6+ support
+- CycloneDX 1.7+ support
 - Vulnerability data integration (VEX)
 
 ## License

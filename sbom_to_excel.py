@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 SBOM to Excel Converter
-Converts SPDX and CycloneDX (Software Bill of Materials) files to Excel format
+Converts SPDX and CycloneDX (Software Bill of Materials) files to Excel or CSV
 Supports:
 - SPDX 2.2/2.3 in tag-value and JSON formats
-- CycloneDX 1.3/1.4/1.5 in JSON and XML formats
+- CycloneDX 1.3/1.4/1.5/1.6 in JSON and XML formats
 """
 
 import argparse
@@ -15,6 +15,7 @@ import pandas as pd
 import re
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Tuple
+from openpyxl.utils import get_column_letter
 
 
 class SBOMParser:
@@ -292,17 +293,22 @@ class CycloneDXParser(SBOMParser):
         try:
             root = ET.fromstring(content)
             
-            # Handle namespaces
-            ns = {'cdx': 'http://cyclonedx.org/schema/bom/1.5'}
+            # Handle namespaces. The spec version is encoded in the namespace
+            # URI (e.g. http://cyclonedx.org/schema/bom/1.6), not the root's
+            # `version` attribute — that's the BOM revision number.
+            ns = {'cdx': 'http://cyclonedx.org/schema/bom/1.6'}
+            spec_version = ''
             if root.tag.startswith('{'):
-                ns['cdx'] = root.tag.split('}')[0][1:]
-            
+                ns_uri = root.tag.split('}')[0][1:]
+                ns['cdx'] = ns_uri
+                spec_version = ns_uri.rsplit('/', 1)[-1]
+
             # Extract document information
             metadata = root.find('.//cdx:metadata', ns)
             self.document_info = {
                 'Format': 'CycloneDX',
                 'BOM Format': 'CycloneDX',
-                'Spec Version': root.get('version', ''),
+                'Spec Version': spec_version,
                 'Serial Number': root.get('serialNumber', ''),
                 'Version': root.get('version', '1'),
                 'Created': '',
@@ -461,148 +467,133 @@ def detect_format(filepath: Path) -> str:
     return 'Unknown'
 
 
+COMPONENT_COLUMN_ORDER = [
+    'Package Name', 'Version', 'Type', 'License', 'PURL',
+    'Author', 'Supplier', 'Copyright', 'Description', 'Checksum',
+    'External References', 'Download Location', 'SPDXID',
+    'License Declared', 'Files Analyzed', 'Verification Code', 'Comment'
+]
+
+
+def _ordered_components_df(packages: List[Dict]) -> pd.DataFrame:
+    """Build a components DataFrame with consistent column ordering and empty columns dropped."""
+    df = pd.DataFrame(packages)
+    ordered = [col for col in COMPONENT_COLUMN_ORDER if col in df.columns]
+    df = df[ordered]
+    return df.loc[:, (df != '').any(axis=0)]
+
+
+def _autosize_columns(worksheet, df: pd.DataFrame):
+    """Size columns to the longest value in each column, capped at 50 chars."""
+    for idx, col in enumerate(df.columns):
+        max_length = max(df[col].astype(str).map(len).max(), len(col)) + 2
+        worksheet.column_dimensions[get_column_letter(idx + 1)].width = min(max_length, 50)
+
+
+def _license_counts(packages: List[Dict]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for p in packages:
+        if p['License']:
+            for lic in (l.strip() for l in p['License'].split(';')):
+                if lic:
+                    counts[lic] = counts.get(lic, 0) + 1
+    return counts
+
+
+def _summary_rows(packages: List[Dict], document_info: Dict) -> Dict:
+    return {
+        'SBOM Format': document_info.get('Format', 'Unknown'),
+        'Total Components': len(packages),
+        'Unique Licenses': len(set(p['License'] for p in packages if p['License'])),
+        'Components with Version': sum(1 for p in packages if p['Version']),
+        'Components with PURL': sum(1 for p in packages if p['PURL']),
+        'Components with Checksums': sum(1 for p in packages if p['Checksum']),
+        'Components with External Refs': sum(1 for p in packages if p['External References']),
+        'Component Types': ', '.join(set(p['Type'] for p in packages if p['Type']))
+    }
+
+
 def create_excel_report(packages: List[Dict], document_info: Dict, output_path: Path):
     """Create Excel file with SBOM data"""
-    
-    # Create a Pandas Excel writer
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        
-        # Create packages sheet
         if packages:
-            df_packages = pd.DataFrame(packages)
-            
-            # Reorder columns for better readability
-            column_order = [
-                'Package Name', 'Version', 'Type', 'License', 'PURL', 
-                'Author', 'Supplier', 'Copyright', 'Description', 'Checksum',
-                'External References', 'Download Location', 'SPDXID', 
-                'License Declared', 'Files Analyzed', 'Verification Code', 'Comment'
-            ]
-            
-            # Only include columns that exist
-            column_order = [col for col in column_order if col in df_packages.columns]
-            df_packages = df_packages[column_order]
-            
-            # Remove empty columns
-            df_packages = df_packages.loc[:, (df_packages != '').any(axis=0)]
-            
+            df_packages = _ordered_components_df(packages)
             df_packages.to_excel(writer, sheet_name='Components', index=False)
-            
-            # Auto-adjust column widths
-            worksheet = writer.sheets['Components']
-            for idx, col in enumerate(df_packages.columns):
-                max_length = max(
-                    df_packages[col].astype(str).map(len).max(),
-                    len(col)
-                ) + 2
-                # Limit column width to 50 characters for readability
-                worksheet.column_dimensions[chr(65 + idx)].width = min(max_length, 50)
-        
-        # Create document info sheet
+            _autosize_columns(writer.sheets['Components'], df_packages)
+
         df_info = pd.DataFrame(list(document_info.items()), columns=['Property', 'Value'])
         df_info.to_excel(writer, sheet_name='Document Info', index=False)
-        
-        # Auto-adjust column widths for document info
-        worksheet = writer.sheets['Document Info']
-        for idx, col in enumerate(df_info.columns):
-            max_length = max(
-                df_info[col].astype(str).map(len).max(),
-                len(col)
-            ) + 2
-            worksheet.column_dimensions[chr(65 + idx)].width = min(max_length, 50)
-        
-        # Create summary statistics sheet
+        _autosize_columns(writer.sheets['Document Info'], df_info)
+
         if packages:
-            # Calculate statistics
-            df_packages_full = pd.DataFrame(packages)
-            
-            summary_data = {
-                'SBOM Format': document_info.get('Format', 'Unknown'),
-                'Total Components': len(packages),
-                'Unique Licenses': len(set(p['License'] for p in packages if p['License'])),
-                'Components with Version': sum(1 for p in packages if p['Version']),
-                'Components with PURL': sum(1 for p in packages if p['PURL']),
-                'Components with Checksums': sum(1 for p in packages if p['Checksum']),
-                'Components with External Refs': sum(1 for p in packages if p['External References']),
-                'Component Types': ', '.join(set(p['Type'] for p in packages if p['Type']))
-            }
-            
-            # Add license breakdown
-            license_counts = {}
-            for p in packages:
-                if p['License']:
-                    # Handle multiple licenses separated by semicolon
-                    licenses = [l.strip() for l in p['License'].split(';')]
-                    for lic in licenses:
-                        if lic:
-                            license_counts[lic] = license_counts.get(lic, 0) + 1
-            
-            df_summary = pd.DataFrame(list(summary_data.items()), columns=['Metric', 'Value'])
+            df_summary = pd.DataFrame(
+                list(_summary_rows(packages, document_info).items()),
+                columns=['Metric', 'Value']
+            )
             df_summary.to_excel(writer, sheet_name='Summary', index=False)
-            
-            # Auto-adjust column widths for summary
-            worksheet = writer.sheets['Summary']
-            for idx, col in enumerate(df_summary.columns):
-                max_length = max(
-                    df_summary[col].astype(str).map(len).max(),
-                    len(col)
-                ) + 2
-                worksheet.column_dimensions[chr(65 + idx)].width = min(max_length, 50)
-            
-            # Add license breakdown if there are licenses
-            if license_counts:
+            _autosize_columns(writer.sheets['Summary'], df_summary)
+
+            counts = _license_counts(packages)
+            if counts:
                 df_licenses = pd.DataFrame(
-                    list(license_counts.items()), 
+                    list(counts.items()),
                     columns=['License', 'Count']
                 ).sort_values('Count', ascending=False)
-                
                 df_licenses.to_excel(writer, sheet_name='License Summary', index=False)
-                
-                # Auto-adjust column widths
-                worksheet = writer.sheets['License Summary']
-                for idx, col in enumerate(df_licenses.columns):
-                    max_length = max(
-                        df_licenses[col].astype(str).map(len).max(),
-                        len(col)
-                    ) + 2
-                    worksheet.column_dimensions[chr(65 + idx)].width = min(max_length, 50)
+                _autosize_columns(writer.sheets['License Summary'], df_licenses)
+
+
+def create_csv_report(packages: List[Dict], output_path: Path):
+    """Write the Components table to a CSV file. Only the component rows are
+    emitted — document info, summary, and license breakdown are Excel-only."""
+    if not packages:
+        pd.DataFrame(columns=COMPONENT_COLUMN_ORDER).to_csv(output_path, index=False, encoding='utf-8')
+        return
+    _ordered_components_df(packages).to_csv(output_path, index=False, encoding='utf-8')
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert SBOM files (SPDX and CycloneDX) to Excel format',
+        description='Convert SBOM files (SPDX and CycloneDX) to Excel or CSV format',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Supported formats:
   - SPDX 2.2/2.3 (tag-value and JSON)
-  - CycloneDX 1.3/1.4/1.5 (JSON and XML)
+  - CycloneDX 1.3/1.4/1.5/1.6 (JSON and XML)
+
+Output is chosen by extension: .xlsx writes a multi-sheet workbook, .csv
+writes the Components table only.
 
 Examples:
   %(prog)s input.spdx
   %(prog)s cyclonedx.json -o output.xlsx
   %(prog)s sbom.xml -o sbom_report.xlsx
+  %(prog)s sbom.json -o components.csv
   %(prog)s any_sbom_file.json -v
         '''
     )
-    
+
     parser.add_argument('input', help='Input SBOM file (SPDX or CycloneDX format)')
-    parser.add_argument('-o', '--output', help='Output Excel file (default: input_file.xlsx)')
+    parser.add_argument('-o', '--output',
+                       help='Output file — .xlsx for a workbook or .csv for components only '
+                            '(default: input_file.xlsx)')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
-    parser.add_argument('-f', '--format', choices=['auto', 'spdx', 'cyclonedx'], 
+    parser.add_argument('-f', '--format', choices=['auto', 'spdx', 'cyclonedx'],
                        default='auto', help='SBOM format (default: auto-detect)')
-    
+
     args = parser.parse_args()
-    
+
     # Determine output filename
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"Error: Input file '{args.input}' not found")
         sys.exit(1)
-    
+
     if args.output:
         output_path = Path(args.output)
     else:
         output_path = input_path.with_suffix('.xlsx')
+    is_csv = output_path.suffix.lower() == '.csv'
     
     try:
         # Detect format
@@ -633,17 +624,22 @@ Examples:
             print(f"Found {len(packages)} components")
             print(f"Document: {document_info.get('Document Name', document_info.get('Component Name', 'Unknown'))}")
         
-        # Create Excel report
-        create_excel_report(packages, document_info, output_path)
-        
-        print(f"Successfully created Excel report: {output_path}")
-        
-        if args.verbose:
-            print("\nReport contents:")
-            print(f"  - Document Info sheet: Basic SBOM document information")
-            print(f"  - Components sheet: Detailed information for {len(packages)} components")
-            print(f"  - Summary sheet: Statistical summary of the SBOM")
-            print(f"  - License Summary sheet: License usage breakdown")
+        if is_csv:
+            create_csv_report(packages, output_path)
+            print(f"Successfully created CSV report: {output_path}")
+            if args.verbose:
+                print(f"\nReport contents:")
+                print(f"  - Components: {len(packages)} rows (document info, summary, and "
+                      f"license breakdown are .xlsx-only)")
+        else:
+            create_excel_report(packages, document_info, output_path)
+            print(f"Successfully created Excel report: {output_path}")
+            if args.verbose:
+                print("\nReport contents:")
+                print(f"  - Document Info sheet: Basic SBOM document information")
+                print(f"  - Components sheet: Detailed information for {len(packages)} components")
+                print(f"  - Summary sheet: Statistical summary of the SBOM")
+                print(f"  - License Summary sheet: License usage breakdown")
         
     except Exception as e:
         print(f"Error: {e}")
