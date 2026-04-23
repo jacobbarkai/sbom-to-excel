@@ -42,3 +42,6 @@ logs/
 Thumbs.db
 .Thumbs.db
 ._*
+
+# Local settings
+.claude/settings.local.json
